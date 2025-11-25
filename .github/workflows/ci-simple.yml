@@ -1,0 +1,49 @@
+name: CI/CD - Simple
+
+# Trigger: Run on every push
+on:
+  push:
+    branches:
+      - '**'  # All branches
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-and-build:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: 📦 Install Dependencies
+        run: |
+          cd clothing-store
+          pip install -r requirements.txt
+          pip install pytest
+      
+      - name: 🧪 Run Tests
+        run: |
+          cd clothing-store
+          python test_suite.py
+      
+      - name: 🏗️ Build Application
+        run: |
+          cd clothing-store
+          python -c "from app import app; print('✅ Build successful!')"
+          echo "Build completed successfully at $(date)"
+      
+      - name: 📊 Summary
+        if: always()
+        run: |
+          echo "## 🎯 Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Author:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

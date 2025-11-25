@@ -1,0 +1,239 @@
+name: Test and Build
+
+# Trigger on push to repository
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'clothing-store/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('clothing-store/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          cd clothing-store
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+      
+      - name: Run unit tests
+        run: |
+          cd clothing-store
+          python -m pytest test_suite.py -v --tb=short
+      
+      - name: Run comprehensive tests
+        run: |
+          cd clothing-store
+          python test_suite.py
+        continue-on-error: true
+      
+      - name: Generate test coverage report
+        run: |
+          cd clothing-store
+          python -m pytest test_suite.py --cov=. --cov-report=xml --cov-report=html
+        continue-on-error: true
+      
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./clothing-store/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+        continue-on-error: true
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.python-version }}
+          path: |
+            clothing-store/htmlcov/
+            clothing-store/coverage.xml
+
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    needs: test  # Run after tests pass
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          cd clothing-store
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Verify application structure
+        run: |
+          cd clothing-store
+          echo "Checking application files..."
+          ls -la
+          echo "Checking templates..."
+          ls -la templates/
+      
+      - name: Initialize database
+        run: |
+          cd clothing-store
+          python seed_data.py
+      
+      - name: Check Flask application
+        run: |
+          cd clothing-store
+          python -c "from app import app; print('✓ Flask app imports successfully')"
+      
+      - name: Create build artifact
+        run: |
+          mkdir -p build
+          cp -r clothing-store build/
+          echo "Build completed at $(date)" > build/BUILD_INFO.txt
+          echo "Python version: $(python --version)" >> build/BUILD_INFO.txt
+          echo "Git commit: $(git rev-parse HEAD)" >> build/BUILD_INFO.txt
+      
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: clothing-store-build
+          path: build/
+          retention-days: 30
+      
+      - name: Build summary
+        run: |
+          echo "### ✅ Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** Success" >> $GITHUB_STEP_SUMMARY
+          echo "**Python Version:** $(python --version)" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📦 Build artifact uploaded successfully!" >> $GITHUB_STEP_SUMMARY
+
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install linting tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pylint black isort
+      
+      - name: Run flake8
+        run: |
+          cd clothing-store
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        continue-on-error: true
+      
+      - name: Run pylint
+        run: |
+          cd clothing-store
+          pylint *.py --exit-zero
+        continue-on-error: true
+      
+      - name: Check code formatting with black
+        run: |
+          cd clothing-store
+          black --check . --diff
+        continue-on-error: true
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
+      
+      - name: Run Bandit security scan
+        run: |
+          cd clothing-store
+          bandit -r . -f json -o bandit-report.json
+        continue-on-error: true
+      
+      - name: Check dependencies for vulnerabilities
+        run: |
+          cd clothing-store
+          safety check --json
+        continue-on-error: true
+      
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: clothing-store/bandit-report.json
+        continue-on-error: true
+
+  notify:
+    name: Notification
+    runs-on: ubuntu-latest
+    needs: [test, build, lint, security]
+    if: always()
+    
+    steps:
+      - name: Check workflow status
+        run: |
+          echo "### 🎉 Workflow Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ All jobs completed!" >> $GITHUB_STEP_SUMMARY
